@@ -3,7 +3,6 @@ import aiohttp.client_exceptions
 from aiohttp.typedefs import StrOrURL
 from rapidfuzz.process import extractOne
 from typing import (
-    Any,
     ClassVar,
     Literal,
     Optional,
@@ -76,11 +75,11 @@ class KoreaForecastForDiscord:
         *,
         method : Literal['초단기실황', '초단기예보', '단기예보'],
         city : str,
-        hidden : bool = False
+        hidden : bool = True,
     ) :
         """검색하고자 하는 도시의 날씨를 검색합니다. 그리고나서, 임베딩 페이지를 보여줍니다.
-        Button : 날짜를 선택하는 버튼입니다. 초단기 실황에서만 나타나지 않습니다.
-        Select : 시간을 선택하는 메뉴입니다. 초단기 실황에서만 나타나지 않습니다.
+        `Button`: 날짜를 선택하는 버튼입니다. 초단기 실황에서만 나타나지 않습니다.
+        `Select`: 시간을 선택하는 메뉴입니다. 초단기 실황에서만 나타나지 않습니다.
         
         ## Args:
         * `interaction (discord.Interaction)` : discord.Interaction입니다.
@@ -98,6 +97,7 @@ class KoreaForecastForDiscord:
             `aiohttp.ClientError` : Aiohttp 라이브러리와 관련된 오류 발생 시 반환합니다.
         """
         try:
+            # 안정성을 위해 defer를 사용합니다. thinking = true 시 최대 15분 간 응답 대기를 합니다.
             await interaction.response.defer(thinking=True, ephemeral=hidden)
             if not self.check_korean(city):
                 raise ValueError("오로지 한국어 / ',' /' '/ '.'만 사용할 수 있습니다.")
@@ -115,7 +115,7 @@ class KoreaForecastForDiscord:
                 location=location,
                 numOfRows=numOfRows,
             )
-            page = WeatherPages(entries, author=interaction.user, ephemeral=hidden)
+            page = WeatherPages(entries=entries, author=interaction.user, hidden=hidden)
             await page.start(interaction)
         
         except (ValueError, LocationNotFound, WeatherResponseException):

@@ -42,14 +42,14 @@ class ForecastInputBase(BaseModel):
     ny : int
 
 
-class ForecastResponseModel(NamedTuple):
+class ForecastResponseModel(BaseModel):
     """응답 전체모델입니다.
     헤더와 바디로 나뉘어져 있으며, 바디는 응답 실패 시, None으로 반환될 수 있습니다."""
     header : ForecastResponseHeader
     body : Optional[ForecastResponseBody] = None
 
 
-class ForecastResponseHeader(NamedTuple):    
+class ForecastResponseHeader(BaseModel):    
     """응답 헤더 모델입니다."""
     resultCode : KoreaWeatherEnum
     resultMsg : str
@@ -71,7 +71,7 @@ class ForecastItems(NamedTuple):
     item : WeatherGen
 
 
-class BaseResponseItem(NamedTuple):
+class BaseResponseItem(BaseModel):
     baseDate : str
     baseTime : str
     nx : int

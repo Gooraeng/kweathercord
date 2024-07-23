@@ -1,4 +1,6 @@
 __pycache__
 .env
-setup.py
-README.rst
+build/
+dist/
+.pypirc
+*.egg-info/

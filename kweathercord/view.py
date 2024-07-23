@@ -12,25 +12,26 @@ class WeatherPages(ui.View):
     def __init__(
         self,
         entries : WeatherResult,
-        *,
+        hidden : bool = True,
         author : Optional[Union[discord.Member, discord.User]] = None,
-        ephemeral : bool = False
     ):
-        if not self.check_invaild():
-            raise ValueError('ephemeral과 author 둘 다 None일 수 없습니다.')
-        
         super().__init__()
         self.entries = entries
-        self.message : Optional[discord.InteractionMessage] = None
         self.author = author
-        self.ephemeral = ephemeral
+        self.hidden = hidden
+        
+        if not self.check_vaild():
+            raise ValueError('author와 hidden 둘 중 하나는 반드시 있어야 합니다.')
+        
+        self.message : Optional[discord.InteractionMessage] = None
         self.clear_items()
         self.set_init()
+        
     
-    def check_invaild(self):
-        if not self.ephemeral and not self.author:
-            return False
-        return True
+    def check_vaild(self) -> bool:
+        if self.hidden or self.author:
+            return True
+        return False
 
     def set_init(self):
         # 제일 빠른 날짜이면서 제일 빠른 시간으로!
@@ -53,7 +54,7 @@ class WeatherPages(ui.View):
             self.add_item(select) 
         
         self.embed = discord.Embed(color=discord.Colour.blurple())
-        self.embed.set_author(text='출처 - 대한민국 공식 전자정부 누리집', url='https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do?publicDataPk=15084084')
+        self.embed.set_author(name='출처 - 대한민국 공식 전자정부 누리집', url='https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do?publicDataPk=15084084')
         self.embed, self.file = self.try_edit_embed_message(custom_id=date)
     
     def search(self, custom_id : str, *, hour : Optional[str] = None, get_times : bool = False):
@@ -83,7 +84,7 @@ class WeatherPages(ui.View):
         *, 
         custom_id : str,
         hour : Optional[str] = None
-    ):
+    ) -> tuple[discord.Embed, discord.File]:
         date, time, weather = self.search(custom_id, hour=hour)
         self.embed.title = f"{self.entries.city_name}\n{date} 날씨"
         self.embed.description = time
@@ -126,7 +127,7 @@ class WeatherPages(ui.View):
                 self.message.edit(view=None)
     
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if self.ephemeral:
+        if self.hidden:
             return True
         
         if interaction.user != self.author:
