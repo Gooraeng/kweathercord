@@ -7,7 +7,7 @@ KweatherDiscord
 
 구현 모습
 ---------------
-.. image:: example/results/weather1.png
+.. image:: ./example/results/weather1.png
     :width: 400
 
 
@@ -29,11 +29,13 @@ KweatherDiscord
 --------------
 
 - 설치 시
+
 .. code:: sh
 
     pip install -U kweather-cord
 
 - 업그레이드 시
+
 .. code:: sh
 
     pip install kweather-cord --upgrade
@@ -132,11 +134,11 @@ KweatherDiscord
                 await interaction.followup.send(e)
 
 
-async def setup(bot : Test):
-    await bot.add_cog(Weather(bot))
+    async def setup(bot : Test):
+        await bot.add_cog(Weather(bot))
 
 
 참고 링크
---------
+-----------
 
 - `대한민국 기상청 API <https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do?publicDataPk=15084084>`_
