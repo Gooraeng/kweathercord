@@ -12,7 +12,7 @@ __title__ = 'kweathercord'
 __author__ = 'Gooraeng'
 __license__ = 'MIT'
 __copyright__ = 'Copyright 2024-present Gooraeng'
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 __path__ = __import__('pkgutil').extend_path(__path__, __name__)
 
@@ -34,7 +34,7 @@ class Version(NamedTuple):
     release : Literal['alpha', 'beta', 'candidate', 'final']
     serial : int
 
-version_info = Version(major=0, minor=1, micro=0, release='final', serial=0)
+version_info = Version(major=0, minor=1, micro=1, release='final', serial=0)
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
