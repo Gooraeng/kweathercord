@@ -25,6 +25,7 @@ class WeatherResponseException(KWeatherException):
     def __str__(self) -> str:
         return self.message
 
+
 class LocationNotFound(KWeatherException):
     """지역 검색에 실패할 시 발생되는 예외 클래스입니다."""
     

@@ -1,17 +1,14 @@
 from discord import app_commands, Interaction
 from discord.ext import commands
-from typing import TYPE_CHECKING, Literal
-from kweathercord import KoreaForecastForDiscord
+from typing import Literal
+
 from bot_example import Test   
 
 
 class Weather(commands.Cog):
     def __init__(self, bot : Test) -> None:
         self.bot = bot
-        # "setup_hook 함수 내"에서 선언할 수 있다면 상관없습니다.
-        # 여기서 선언하는 것도 setup_hook 내에서 선언하는 것과 같습니다.
-        self.weather = KoreaForecastForDiscord(self.bot)
-    
+        
     # commands.Context는 가급적 사용하지 않습니다.
     @app_commands.command(name='날씨', description='지역의 날씨를 찾아보세요')
     @app_commands.describe(
@@ -27,8 +24,8 @@ class Weather(commands.Cog):
                 method = '단기예보'
             else:
                 method = '초단기예보'
-            await self.weather.get_weather(interaction, method=method, city=where)
-            
+            await self.bot.weather.get_weather(interaction, method=method, city=where, hidden=True)
+
         except Exception as e:
             # interaction.response.defer를 사용하기 때문에,
             # 오류 발생 시, Interaction.Followup 이나 InteractionMessage만 허용됩니다.

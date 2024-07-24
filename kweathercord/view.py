@@ -2,7 +2,7 @@ from __future__ import annotations
 from discord import ui
 from pathlib import Path
 from typing import Any, Optional, Union
-from .model import WeatherResult
+from .model import WeatherResult, SearchWeatherWithDate
 
 import discord
 import re
@@ -13,7 +13,7 @@ class WeatherPages(ui.View):
         self,
         entries : WeatherResult,
         hidden : bool = True,
-        author : Optional[Union[discord.Member, discord.User]] = None,
+        author : Optional[Union[discord.Member, discord.User]] = None
     ):
         super().__init__()
         self.entries = entries
@@ -24,10 +24,10 @@ class WeatherPages(ui.View):
             raise ValueError('author와 hidden 둘 중 하나는 반드시 있어야 합니다.')
         
         self.message : Optional[discord.InteractionMessage] = None
+        self.embed = discord.Embed()
         self.clear_items()
         self.set_init()
-        
-    
+            
     def check_vaild(self) -> bool:
         if self.hidden or self.author:
             return True
@@ -50,21 +50,18 @@ class WeatherPages(ui.View):
         
         if len(times) > 1:
             select = TimeSelect(date=date, times=times)
-            select.fill_options()
+            select._fill_options()
             self.add_item(select) 
         
-        self.embed = discord.Embed(color=discord.Colour.blurple())
         self.embed.set_author(name='출처 - 대한민국 공식 전자정부 누리집', url='https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do?publicDataPk=15084084')
         self.embed, self.file = self.try_edit_embed_message(custom_id=date)
-    
-    def search(self, custom_id : str, *, hour : Optional[str] = None, get_times : bool = False):
-        """ 날짜가 주어져 있으며, 시간이 주어져 있든 주어져있지 않든 날씨를 찾습니다.
+         
+    def search(self, custom_id : str, *, hour : Optional[str] = None) -> SearchWeatherWithDate:
+        """날짜가 주어져 있으며, 시간이 주어져 있든 주어져있지 않든 날씨를 찾습니다.
         단, 시간이 주어져 있지 않으면, 해당 날짜에서 가장 빠른 날짜의 날씨를 반환합니다."""
     
         weather = self.entries.weather
         times = [j.time for i in weather for j in i.time_weather if i.date == custom_id]
-        if get_times:
-            return times
         
         if hour and hour in times:
             time = hour
@@ -77,7 +74,24 @@ class WeatherPages(ui.View):
                     # 날짜, 시간, 날씨를 튜플로 반환
                     date = "%s년 %s월 %s일" % (custom_id[2:4], custom_id[4:6], custom_id[6:])
                     time = "## %s시" % (time[:2])
-                    return date, time, j.weather       
+                    return SearchWeatherWithDate(
+                        date=date,
+                        time=time,
+                        times=times,
+                        weather=j.weather
+                    )
+    
+    def embed_colour_by_weather(self, filename : str) -> Any:
+        if 'night' in filename:
+            return 0x353535
+        elif 'clear' in filename:
+            return 0xFFF29E
+        elif 'cloudy' in filename:
+            return 0x6EADFA
+        elif 'snow' in filename:
+            return 0xE1FCFA
+        elif 'rain' in filename or 'shower' in filename:
+            return 0x059FC3
         
     def try_edit_embed_message(
         self, 
@@ -85,39 +99,40 @@ class WeatherPages(ui.View):
         custom_id : str,
         hour : Optional[str] = None
     ) -> tuple[discord.Embed, discord.File]:
-        date, time, weather = self.search(custom_id, hour=hour)
-        self.embed.title = f"{self.entries.city_name}\n{date} 날씨"
-        self.embed.description = time
+        custom_id = re.sub(r'\D', '', custom_id)
+        search = self.search(custom_id, hour=hour)
+        
+        self.embed.title = f"{self.entries.city_name}\n{search.date} 날씨"
+        self.embed.description = search.time
         self.embed = self.embed.clear_fields()
         
-        for name, value in weather.items():
+        for name, value in search.weather.items():
             if name == 'filename':
                 continue
             self.embed.add_field(name=name, value=value)
         
-        file = weather['filename']
+        file = search.weather['filename']
         path = Path(__file__).parent / 'asset/img' / f'{file}.png'
         self.file = discord.File(path, filename='weather.png')
+        
+        self.embed.colour = self.embed_colour_by_weather(file)
         self.embed.set_thumbnail(url="attachment://weather.png")
+        
+        if self.children[-1].type.name == 'select':
+            self.remove_item(self.children[-1])
+        select = TimeSelect(date=custom_id, times=search.times)
+        select._fill_options()
+        if select.options and len(select.options) > 1:
+            self.add_item(select)
+            
         return self.embed, self.file       
         
     async def start(self, interaction : discord.Interaction):
         self.message = await interaction.edit_original_response(embed=self.embed, attachments=[self.file], view=self)
     
     async def rebind(self, interaction : discord.Interaction, *, custom_id : str, hour : Optional[str] = None):
-        custom_id = re.sub(r'\D', '', custom_id)
-        self.embed, file = self.try_edit_embed_message(custom_id=custom_id, hour=hour)
-        
-        if self.children[-1].type.name == 'select':
-            self.remove_item(self.children[-1])
-        select = TimeSelect(
-            date=custom_id,
-            times=self.search(custom_id=custom_id, get_times=True)
-        )
-        select.fill_options()
-        if select.options and len(select.options) > 1:
-            self.add_item(select)
-        await interaction.response.edit_message(embed=self.embed, attachments=[file], view=self)
+        self.embed, self.file = self.try_edit_embed_message(custom_id=custom_id, hour=hour)
+        await interaction.response.edit_message(embed=self.embed, attachments=[self.file], view=self)
         
     async def on_timeout(self) -> None:
         if self.message:
@@ -153,7 +168,7 @@ class TimeSelect(discord.ui.Select['WeatherPages']):
             custom_id=f'select-{self.date}'
         )
 
-    def fill_options(self):
+    def _fill_options(self):
         for i in self.times:
             self.add_option(
                 label=f"{i[:2]}시",

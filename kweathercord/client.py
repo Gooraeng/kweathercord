@@ -4,6 +4,7 @@ from aiohttp.typedefs import StrOrURL
 from rapidfuzz.process import extractOne
 from typing import (
     ClassVar,
+    List,
     Literal,
     Optional,
 )
@@ -30,7 +31,6 @@ import datetime
 import discord
 import json
 import math
-import os
 import pathlib
 import re
 
@@ -42,12 +42,13 @@ class KoreaForecastForDiscord:
 
     def __init__(self, bot) -> None:
         self.bot = bot
-        self.__serviceKey : Optional[str] = os.getenv('serviceKey')
+        self.__session = None
+        self.__serviceKey : Optional[str] = None
         self.__lock = asyncio.Lock()
         self.__url : Optional[str] = None
         self.__item = self.__generate_items()
-     
-    def __generate_items(self):
+
+    def __generate_items(self) -> List[LocationInfo]:
         file = pathlib.Path(__file__).parent.resolve() / 'area/weather_area.json'
         with open(file, 'r', encoding='utf-8-sig') as f:
             data = json.load(f)
@@ -63,7 +64,7 @@ class KoreaForecastForDiscord:
         ]
         return data
     
-    def check_korean(self, string : str):
+    def _check_korean(self, string : str) -> bool:
         result = re.fullmatch(r'[가-힣0-9., ]*$', string)
         if result:
             return True
@@ -75,7 +76,7 @@ class KoreaForecastForDiscord:
         *,
         method : Literal['초단기실황', '초단기예보', '단기예보'],
         city : str,
-        hidden : bool = True,
+        hidden : bool = True
     ) :
         """검색하고자 하는 도시의 날씨를 검색합니다. 그리고나서, 임베딩 페이지를 보여줍니다.
         `Button`: 날짜를 선택하는 버튼입니다. 초단기 실황에서만 나타나지 않습니다.
@@ -91,15 +92,17 @@ class KoreaForecastForDiscord:
         * `hidden (bool)` : 답장 메세지가 다른 사람에게 보이게 할 것인지 결정합니다. 미지정 시 False로 정합니다.
         
         ## Raise:
-            `ValueError` : 적절하지 않은 값이 투입되었을 때, 발생합니다.
-            `LocationNotFound` : 장소 검색에 실패했을 시에 발생합니다. 유사 장소 최대 5곳을 반환합니다.
-            `WeatherResponseException` : 기상청 API 응답 헤더로부터 발생되는 오류입니다.
-            `aiohttp.ClientError` : Aiohttp 라이브러리와 관련된 오류 발생 시 반환합니다.
+        * `ValueError` : 적절하지 않은 값이 투입되었을 때, 발생합니다.
+        * `LocationNotFound` : 장소 검색에 실패했을 시에 발생합니다. 유사 장소 최대 5곳을 반환합니다.
+        * `WeatherResponseException` : 기상청 API 응답 헤더로부터 발생되는 오류입니다.
+        * `aiohttp.ClientError` : aiohttp 라이브러리와 관련된 오류 발생 시 반환합니다.
         """
+        err = discord.Embed(color=discord.Colour.red())
+
         try:
             # 안정성을 위해 defer를 사용합니다. thinking = true 시 최대 15분 간 응답 대기를 합니다.
             await interaction.response.defer(thinking=True, ephemeral=hidden)
-            if not self.check_korean(city):
+            if not self._check_korean(city):
                 raise ValueError("오로지 한국어 / ',' /' '/ '.'만 사용할 수 있습니다.")
             
             if method == '단기예보':
@@ -118,11 +121,20 @@ class KoreaForecastForDiscord:
             page = WeatherPages(entries=entries, author=interaction.user, hidden=hidden)
             await page.start(interaction)
         
-        except (ValueError, LocationNotFound, WeatherResponseException):
-            raise
-        
+        except (ValueError, LocationNotFound, WeatherResponseException) as error:
+            if isinstance(error, ValueError):
+                err.title = '적절하지 않은 입력'
+            elif isinstance(error, LocationNotFound):
+                err.title = '지역 검색 실패'
+            elif isinstance(error, WeatherResponseException):
+                err.title = '기상청 API 에러'
+            err.description = error.__str__()
+            await interaction.edit_original_response(embed=err, view=None)
+            
         except aiohttp.ClientError:
-            raise aiohttp.ClientError('알 수 없는 HTTP 오류가 발생했습니다. 다시 시도해주십시오.')
+            err.title = 'HTTP 클라이언트 에러'
+            err.description = '알 수 없는 HTTP 오류가 발생했습니다. 다시 시도해주십시오.'
+            await interaction.edit_original_response(embed=err, view=None)
 
     async def _configure_request(
         self,
@@ -131,69 +143,72 @@ class KoreaForecastForDiscord:
         numOfRows : int = 10,
         pageNo : int = 1,
     ) -> WeatherResult :
-        KST = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-        
-        def get_time_by_method(method):
-            match method:
-                case '초단기실황':
-                    self.__url = self.BASE + 'getUltraSrtNcst'
-                    if KST.minute >= 40:
-                        finalDatetime = KST.replace(minute=0)
-                    else:
-                        finalDatetime = KST.replace(minute=0) - datetime.timedelta(hours=1)
-
-                case '초단기예보':
-                    self.__url = self.BASE + 'getUltraSrtFcst'
-                    if KST.minute >= 45:
-                        finalDatetime = KST.replace(minute=30)
-                    else:
-                        finalDatetime = KST.replace(minute=30) - datetime.timedelta(hours=1)
-                
-                case '단기예보':
-                    self.__url = self.BASE + 'getVilageFcst'
-                    hour = KST.hour
-                    if 0 <= hour < 2:
-                        finalDatetime = KST.replace(hour=23, minute=10) - datetime.timedelta(days=1)
-                    elif 2 <= hour < 5:
-                        finalDatetime = KST.replace(hour=2, minute=10)
-                    elif 5 <= hour < 8:
-                        finalDatetime = KST.replace(hour=5, minute=10)
-                    elif 8 <= hour < 11:
-                        finalDatetime = KST.replace(hour=8, minute=10)
-                    elif 11 <= hour < 14:
-                        finalDatetime = KST.replace(hour=11, minute=10)
-                    elif 14 <= hour < 17:
-                        finalDatetime = KST.replace(hour=14, minute=10)
-                    elif 17 <= hour < 20:
-                        finalDatetime = KST.replace(hour=17, minute=10)
-                    elif 20 <= hour < 23:
-                        finalDatetime = KST.replace(hour=20, minute=10)
-                    else:
-                        finalDatetime = KST.replace(hour=23, minute=10)
-                
-            return finalDatetime
-        
-        async with self.__lock:
-            FINAL_TIME = get_time_by_method(method)                                 
-            base_date = FINAL_TIME.strftime('%Y%m%d')                 
-            base_time = FINAL_TIME.strftime('%H%M')       
-        
-        params = ForecastInputBase(
-            serviceKey=self.__serviceKey,
-            numOfRows=numOfRows,
-            pageNo=pageNo,
-            dataType='JSON',
-            base_date=base_date,
-            base_time=base_time,
-            nx=location.nx,
-            ny=location.ny
-        )
-        
         try:
-            payload = await self.__handle_request(self.__url, method=method, params=params, session=self.bot.session)
+            if self.api_key is None:
+                raise ValueError("기상청 API 키는 절대 None 일 수 없습니다.")
+            
+            KST = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
+            
+            def get_time_by_method(method):
+                match method:
+                    case '초단기실황':
+                        self.__url = self.BASE + 'getUltraSrtNcst'
+                        if KST.minute >= 40:
+                            finalDatetime = KST.replace(minute=0)
+                        else:
+                            finalDatetime = KST.replace(minute=0) - datetime.timedelta(hours=1)
+
+                    case '초단기예보':
+                        self.__url = self.BASE + 'getUltraSrtFcst'
+                        if KST.minute >= 45:
+                            finalDatetime = KST.replace(minute=30)
+                        else:
+                            finalDatetime = KST.replace(minute=30) - datetime.timedelta(hours=1)
+                    
+                    case '단기예보':
+                        self.__url = self.BASE + 'getVilageFcst'
+                        hour = KST.hour
+                        if 0 <= hour < 2:
+                            finalDatetime = KST.replace(hour=23, minute=10) - datetime.timedelta(days=1)
+                        elif 2 <= hour < 5:
+                            finalDatetime = KST.replace(hour=2, minute=10)
+                        elif 5 <= hour < 8:
+                            finalDatetime = KST.replace(hour=5, minute=10)
+                        elif 8 <= hour < 11:
+                            finalDatetime = KST.replace(hour=8, minute=10)
+                        elif 11 <= hour < 14:
+                            finalDatetime = KST.replace(hour=11, minute=10)
+                        elif 14 <= hour < 17:
+                            finalDatetime = KST.replace(hour=14, minute=10)
+                        elif 17 <= hour < 20:
+                            finalDatetime = KST.replace(hour=17, minute=10)
+                        elif 20 <= hour < 23:
+                            finalDatetime = KST.replace(hour=20, minute=10)
+                        else:
+                            finalDatetime = KST.replace(hour=23, minute=10)
+                    
+                return finalDatetime
+            
+            async with self.__lock:
+                FINAL_TIME = get_time_by_method(method)                                 
+                base_date = FINAL_TIME.strftime('%Y%m%d')                 
+                base_time = FINAL_TIME.strftime('%H%M')       
+            
+            params = ForecastInputBase(
+                serviceKey=self.api_key,
+                numOfRows=numOfRows,
+                pageNo=pageNo,
+                dataType='JSON',
+                base_date=base_date,
+                base_time=base_time,
+                nx=location.nx,
+                ny=location.ny
+            )
+        
+            payload = await self.__handle_request(self.__url, method=method, params=params, session=self.session)
             return await self.__handle_response(payload, city=location)
-    
-        except (aiohttp.ClientError, WeatherResponseException):
+
+        except (aiohttp.ClientError, ValueError, WeatherResponseException):
             raise
     
     async def __handle_response(
@@ -359,7 +374,7 @@ class KoreaForecastForDiscord:
         city : str,
         *,
         score_cutoff : float = 42.5
-    ) :
+    ) -> LocationInfo:
         """입력된 곳을 기준으로, 정의된 유사도 기준 이상의 도시를 검색합니다.
         이 때, 유사도가 가장 높은 도시 한 곳의 격자 좌표(nx, ny)와 좌표(9자리 숫자 문자열)를 반환합니다.
         검색에 실패했을 경우 검색값과 가장 비슷한 장소 최대 5곳을 제안합니다.
@@ -449,3 +464,19 @@ class KoreaForecastForDiscord:
         elif method == '단기예보':
             item = (ShortWeatherItem(**s) for s in response_items)
         return item 
+    
+    @property
+    def api_key(self):
+        return self.__serviceKey
+    
+    @api_key.setter
+    def api_key(self, value : str):
+        self.__serviceKey = value
+    
+    @property
+    def session(self):
+        return self.__session
+    
+    @session.setter
+    def session(self, session):
+        self.__session = session

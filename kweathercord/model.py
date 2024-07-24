@@ -43,8 +43,8 @@ class ForecastInputBase(BaseModel):
 
 
 class ForecastResponseModel(BaseModel):
-    """응답 전체모델입니다.
-    헤더와 바디로 나뉘어져 있으며, 바디는 응답 실패 시, None으로 반환될 수 있습니다."""
+    """응답 전체모델입니다. 헤더와 바디로 나뉘어져 있으며,
+    바디는 응답 실패 시, None으로 반환될 수 있습니다."""
     header : ForecastResponseHeader
     body : Optional[ForecastResponseBody] = None
 
@@ -121,3 +121,10 @@ class WeatherResult(NamedTuple):
     """도시명과 날씨 정보를 반환합니다."""
     city_name : str
     weather : List[DateTimeWeather, None, None]
+
+
+class SearchWeatherWithDate(NamedTuple):
+    date : str
+    time : str
+    times : list[str]
+    weather : dict[str, Any]
