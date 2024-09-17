@@ -1,6 +1,6 @@
 from __future__ import annotations
-import aiohttp.client_exceptions
 from aiohttp.typedefs import StrOrURL
+from discord.ext import commands
 from rapidfuzz.process import extractOne
 from typing import (
     ClassVar,
@@ -9,8 +9,9 @@ from typing import (
     Optional,
 )
 from .enums import ForecastDict
-from .exception import LocationNotFound, WeatherResponseException
+from .exception import ClientResponseError, LocationNotFound, WeatherResponseException
 from .model import (
+    CmdResponseType,
     DateTimeWeather,
     ForecastInputBase,
     LocationInfo,
@@ -22,7 +23,7 @@ from .model import (
     WeatherGen,
     WeatherResult,
 )
-from .sun_riseset_time import calculate_sunset_sunrise
+from .utils import check_korean, calculate_sunset_sunrise
 from .view import WeatherPages
 
 import asyncio
@@ -30,9 +31,13 @@ import aiohttp
 import datetime
 import discord
 import json
+import logging
 import math
 import pathlib
 import re
+
+
+_log = logging.getLogger(__name__)
 
 
 class KoreaForecastForDiscord:
@@ -40,13 +45,37 @@ class KoreaForecastForDiscord:
     
     BASE : ClassVar[str] = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/"
 
-    def __init__(self, bot) -> None:
+    def __init__(
+        self,
+        bot : discord.Client,
+        session : Optional[aiohttp.ClientSession] = None,
+        *,
+        use_area_list : bool = True
+    ) -> None:
+        """
+        Args:
+            bot :: `discord.Client`: ...
+            session :: `Optional[aiohttp.ClientSession]`: aiohttp의 clientSession입니다. 기본값은 None.
+            use_area_list :: `bool`: Autocomplete에 활용하기 위해 지역명 리스트 사용을 활성화합니다. 기본값은 True.
+        """
         self.bot = bot
-        self.__session = None
+        self.loop : asyncio.AbstractEventLoop = bot.loop
+        if session is None:
+            self.loop.create_task(self.initialize_session())
+        else:
+            self.__session : aiohttp.ClientSession = session
         self.__serviceKey : Optional[str] = None
         self.__lock = asyncio.Lock()
         self.__url : Optional[str] = None
         self.__item = self.__generate_items()
+
+        if use_area_list:
+            self.area_list = [area.full_name for area in self.__item]
+        else:
+            self.area_list = ['지역명을 불러올 수 없습니다. 개발자에게 문의해주세요.']
+
+    async def initialize_session(self):
+        self.session = aiohttp.ClientSession()
 
     def __generate_items(self) -> List[LocationInfo]:
         file = pathlib.Path(__file__).parent.resolve() / 'area/weather_area.json'
@@ -63,16 +92,10 @@ class KoreaForecastForDiscord:
             ) for item in data
         ]
         return data
-    
-    def _check_korean(self, string : str) -> bool:
-        result = re.fullmatch(r'[가-힣0-9., ]*$', string)
-        if result:
-            return True
-        return False
-    
+
     async def get_weather(
         self,
-        interaction : discord.Interaction,
+        action_type : CmdResponseType,
         *,
         method : Literal['초단기실황', '초단기예보', '단기예보'],
         city : str,
@@ -97,44 +120,67 @@ class KoreaForecastForDiscord:
         * `WeatherResponseException` : 기상청 API 응답 헤더로부터 발생되는 오류입니다.
         * `aiohttp.ClientError` : aiohttp 라이브러리와 관련된 오류 발생 시 반환합니다.
         """
+        
         err = discord.Embed(color=discord.Colour.red())
 
         try:
-            # 안정성을 위해 defer를 사용합니다. thinking = true 시 최대 15분 간 응답 대기를 합니다.
-            await interaction.response.defer(thinking=True, ephemeral=hidden)
-            if not self._check_korean(city):
-                raise ValueError("오로지 한국어 / ',' /' '/ '.'만 사용할 수 있습니다.")
+            if self.api_key is None:
+                raise ValueError("기상청 API 키는 절대 None 일 수 없습니다.")
+            
+            if isinstance(action_type, commands.Context):
+                if hidden:
+                    raise RuntimeError('discord.ext.commands.Context 을 다루고 있을 때는 hidden은 True 일 수 없습니다.')
+                author = action_type.author
+            elif isinstance(action_type, discord.Interaction):
+                # 안정성을 위해 defer를 사용합니다. thinking = true 시 최대 15분 간 응답 대기를 합니다.
+                await action_type.response.defer(thinking=True, ephemeral=hidden)
+                author = action_type.user
+            else:
+                raise TypeError(f'커맨드 타입은 discord.Interaction 나 discord.ext.commands.Context 중 하나만 사용 가능합니다. {action_type.__class__.__name__}는 허용되지 않습니다.')
+
+            if not check_korean(city):
+                raise ValueError('오로지 한국어 / "," / " " / "."만 사용할 수 있습니다.')
             
             if method == '단기예보':
                 numOfRows = 1000
             else:
                 numOfRows = 30
             
-            async with self.__lock:
-                location = self._get_coordinate(city)
+            location = await self.loop.run_in_executor(None, self._get_coordinate, city)
             
             entries = await self._configure_request(
                 method=method,
                 location=location,
                 numOfRows=numOfRows,
             )
-            page = WeatherPages(entries=entries, author=interaction.user, hidden=hidden)
-            await page.start(interaction)
+            page = WeatherPages(entries=entries, author=author, hidden=hidden)
+            await page.start(action_type)
         
-        except (ValueError, LocationNotFound, WeatherResponseException) as error:
+        except (ValueError, LocationNotFound, WeatherResponseException, TypeError, ClientResponseError) as error:
             if isinstance(error, ValueError):
                 err.title = '적절하지 않은 입력'
             elif isinstance(error, LocationNotFound):
                 err.title = '지역 검색 실패'
             elif isinstance(error, WeatherResponseException):
                 err.title = '기상청 API 에러'
+            elif isinstance(error, TypeError):
+                err.title = '부적절한 타입'
+            elif isinstance(error, ClientResponseError):
+                err.title = 'HTTP 클라이언트 에러'
             err.description = error.__str__()
-            await interaction.edit_original_response(embed=err, view=None)
             
-        except aiohttp.ClientError:
-            err.title = 'HTTP 클라이언트 에러'
-            err.description = '알 수 없는 HTTP 오류가 발생했습니다. 다시 시도해주십시오.'
-            await interaction.edit_original_response(embed=err, view=None)
+            try:
+                if isinstance(action_type, discord.Interaction):
+                    await action_type.edit_original_response(embed=err, view=None)
+                else:
+                    await action_type.send(embed=err, view=None)
+            except discord.DiscordException:
+                _log.error('', exc_info=e)
+                raise
+
+        except Exception as e:
+            _log.exception('', exc_info=e)
+            raise
 
     async def _configure_request(
         self,
@@ -143,13 +189,10 @@ class KoreaForecastForDiscord:
         numOfRows : int = 10,
         pageNo : int = 1,
     ) -> WeatherResult :
-        try:
-            if self.api_key is None:
-                raise ValueError("기상청 API 키는 절대 None 일 수 없습니다.")
-            
-            KST = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-            
+        try:                        
             def get_time_by_method(method):
+                KST = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
+                
                 match method:
                     case '초단기실황':
                         self.__url = self.BASE + 'getUltraSrtNcst'
@@ -208,7 +251,7 @@ class KoreaForecastForDiscord:
             payload = await self.__handle_request(self.__url, method=method, params=params, session=self.session)
             return await self.__handle_response(payload, city=location)
 
-        except (aiohttp.ClientError, ValueError, WeatherResponseException):
+        except (ClientResponseError, ValueError, WeatherResponseException):
             raise
     
     async def __handle_response(
@@ -269,7 +312,7 @@ class KoreaForecastForDiscord:
                     if not rise_set_date or rise_set_date != item.fcstDate:
                         rise_set_date = item.fcstDate
                         sunrise, sunset = calculate_sunset_sunrise(item.fcstDate, city.latitude, city.longitude)
-                        
+                    
                 factor = ForecastDict[category]
                 match category:
                     # 강수 상태
@@ -345,6 +388,7 @@ class KoreaForecastForDiscord:
                         continue
 
                     case _ :
+                        # 파고가 없으면 추가하지 않음.
                         if category == 'WAV' and value == '0':
                             continue
                         # 파라미터가 있는 것
@@ -393,24 +437,27 @@ class KoreaForecastForDiscord:
         if 0.0 > score_cutoff or score_cutoff > 100.0:
             raise ValueError('정확도는 0보다 낮거나 100보다 클 수 없습니다.')
 
-        best_match = None
-        highest_score = 0.0
+        best_match : Optional[LocationInfo] = None
+        highest_score : float = 0.0
         similar_result : list[SimilarityInfo]= []
         
-        for location in self.__item:
-            city_sub = re.sub(r'\s+', '', city)
-            location_sub = re.sub(r'\s+', '', location.full_name)
-            result = extractOne(city_sub, [location_sub], score_cutoff=score_cutoff)
-            if not result:
-                continue
+        try:
+            for location in self.__item:
+                city_sub = re.sub(r'\s+', '', city)
+                location_sub = re.sub(r'\s+', '', location.full_name)
+                result = extractOne(city_sub, [location_sub], score_cutoff=score_cutoff)
+                if not result:
+                    continue
 
-            score = result[1]
-            if score > highest_score:
-                highest_score = score
-                best_match = location
-            else:
-                similar_result.append(SimilarityInfo(full_name=location.full_name, score=score))
-                
+                score = result[1]
+                if score > highest_score:
+                    highest_score = score
+                    best_match = location
+                else:
+                    similar_result.append(SimilarityInfo(full_name=location.full_name, score=score))
+        except Exception as e:
+            _log.error('', exc_info=e)
+                    
         if best_match and highest_score >= 64:
             return best_match
         
@@ -442,19 +489,19 @@ class KoreaForecastForDiscord:
             `WeatherResponseException`: 요청에는 성공했으나 기상청 API가 어떠한 이유로 정보제공을 거절했는지 알려줍니다.
         """
         if not session:
-            session = aiohttp.ClientSession()
-        try:
-            async with session.get(url, params=params.model_dump()) as res :
-                if res.status != 200:
-                    raise aiohttp.ClientError
+            raise TypeError('ClientSession을 반드시 이용해야 합니다.')
+        async with session.get(url, params=params.__dict__) as res :
+            # status code가 400 초과이면 예외 발생
+            try:
+                res.raise_for_status()
                 response = (await res.json())['response']
-        except aiohttp.ClientError:
-            raise
-            
-        header : str = response['header']
+            except (aiohttp.ClientResponseError, aiohttp.ContentTypeError) as e:
+                raise ClientResponseError(e.status, e.message)
+
+        header : dict = response['header']
         if header['resultCode'] != "00":
             raise WeatherResponseException(header)
-        
+
         response_items = response['body']['items']['item']
         
         if method == '초단기실황':
@@ -470,13 +517,13 @@ class KoreaForecastForDiscord:
         return self.__serviceKey
     
     @api_key.setter
-    def api_key(self, value : str):
+    def api_key(self, value : Optional[str]):
         self.__serviceKey = value
     
     @property
-    def session(self):
+    def session(self) -> aiohttp.ClientSession:
         return self.__session
     
     @session.setter
-    def session(self, session):
+    def session(self, session : Optional[aiohttp.ClientSession]):
         self.__session = session
