@@ -35,7 +35,6 @@ def get_version() -> str:
 
 setup(
     version=get_version(),
-
     package_data = {
         "kweathercord" : ["area/*", "asset/img/*"],
     }
