@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .enums import KoreaWeatherEnum
-from pydantic import BaseModel
+from dataclasses import dataclass
+from discord.ext import commands
 from typing import (
     Any,
     Generator,
@@ -10,6 +11,11 @@ from typing import (
     Optional,
     Union
 )
+
+import discord
+
+
+CmdResponseType = Union[discord.Interaction, commands.Context]
 
 
 class SimilarityInfo(NamedTuple):
@@ -30,26 +36,28 @@ ShortForecastStatus = Literal['POP', 'PTY', 'PCP', 'REH', 'SNO', 'SKY', 'TMP', '
 UltraShortForecastStatus = Literal['T1H', 'RN1', 'SKY', 'UUU', 'VVV', 'REH', 'PTY', 'LGT', 'VEC', 'WSD']
 
 
-class ForecastInputBase(BaseModel):
+@dataclass(frozen=True)
+class ForecastInputBase:
     """Request 시 필요한 파라미터들입니다."""
     serviceKey : str
-    numOfRows : int = 10
-    pageNo : int = 1
-    dataType : Literal['XML', 'JSON'] = 'XML'
     base_date : str
     base_time : str
     nx : int
     ny : int
+    numOfRows : int = 10
+    pageNo : int = 1
+    dataType : Literal['XML', 'JSON'] = 'XML'
 
 
-class ForecastResponseModel(BaseModel):
+@dataclass(frozen=True)
+class ForecastResponseModel:
     """응답 전체모델입니다. 헤더와 바디로 나뉘어져 있으며,
     바디는 응답 실패 시, None으로 반환될 수 있습니다."""
     header : ForecastResponseHeader
     body : Optional[ForecastResponseBody] = None
 
 
-class ForecastResponseHeader(BaseModel):    
+class ForecastResponseHeader(NamedTuple):    
     """응답 헤더 모델입니다."""
     resultCode : KoreaWeatherEnum
     resultMsg : str
@@ -71,28 +79,33 @@ class ForecastItems(NamedTuple):
     item : WeatherGen
 
 
-class BaseResponseItem(BaseModel):
+@dataclass
+class BaseResponseItem:
     baseDate : str
     baseTime : str
     nx : int
     ny : int
 
 
+@dataclass
 class NowWeatherItem(BaseResponseItem):
     category : NowForecastStatus
     obsrValue : str
 
 
+@dataclass
 class BaseShortWeatherItem(BaseResponseItem):
     fcstDate : str
     fcstTime : str
 
 
+@dataclass
 class UltraShortWeatherItem(BaseShortWeatherItem):
     category : UltraShortForecastStatus
     fcstValue : str
 
 
+@dataclass
 class ShortWeatherItem(BaseShortWeatherItem):
     category : ShortForecastStatus
     fcstValue : str
