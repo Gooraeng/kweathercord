@@ -1,8 +1,9 @@
 from __future__ import annotations
 from discord import ui
+from discord.ext import commands
 from pathlib import Path
 from typing import Any, Optional, Union
-from .model import WeatherResult, SearchWeatherWithDate
+from .model import CmdResponseType, WeatherResult, SearchWeatherWithDate
 
 import discord
 import re
@@ -118,7 +119,7 @@ class WeatherPages(ui.View):
         self.embed.colour = self.embed_colour_by_weather(file)
         self.embed.set_thumbnail(url="attachment://weather.png")
         
-        if self.children[-1].type.name == 'select':
+        if self.children and self.children[-1].type.name == 'select':
             self.remove_item(self.children[-1])
         select = TimeSelect(date=custom_id, times=search.times)
         select._fill_options()
@@ -127,8 +128,11 @@ class WeatherPages(ui.View):
             
         return self.embed, self.file       
         
-    async def start(self, interaction : discord.Interaction):
-        self.message = await interaction.edit_original_response(embed=self.embed, attachments=[self.file], view=self)
+    async def start(self, action_type : CmdResponseType):
+        if isinstance(action_type, discord.Interaction):
+            self.message = await action_type.edit_original_response(embed=self.embed, attachments=[self.file], view=self)
+        elif isinstance(action_type, commands.Context):
+            self.message = await action_type.send(embed=self.embed, attachments=[self.file], view=self)
     
     async def rebind(self, interaction : discord.Interaction, *, custom_id : str, hour : Optional[str] = None):
         self.embed, self.file = self.try_edit_embed_message(custom_id=custom_id, hour=hour)
