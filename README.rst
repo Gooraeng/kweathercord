@@ -1,4 +1,4 @@
-KweatherDiscord
+kweathercord
 ===============
 
 .. image:: https://img.shields.io/pypi/v/kweather-cord.svg
@@ -8,7 +8,7 @@ KweatherDiscord
     :target: https://pypi.org/project/kweather-cord/
     :alt: PyPI supported Python versions
     
-- KweatherDiscord은 대한민국 기상청 API을 이용하여 대한민국의 날씨를 Embed, Button, Select Menu를 이용하여 확인하는 간단한 도구입니다.
+- kweathercord은 대한민국 기상청 API을 이용하여 대한민국의 날씨를 Embed, Button, Select Menu를 이용하여 확인하는 간단한 도구입니다.
 - 초단기실황, 초단기예보, 단기예보를 지원합니다.
 - NOAA 알고리즘을 통해 조회하시는 지역의 일출, 일몰 시간에 맞추어 아이콘이 조정됩니다.
 - 코드 한 줄만으로 모든 게 알아서 이루어집니다.
@@ -29,7 +29,6 @@ KweatherDiscord
 의존 패키지
 ----------------
 - Discord.py (2.4.0 이상)
-- pydantic
 - RapidFuzz
 
 
@@ -69,6 +68,7 @@ KweatherDiscord
     from kweathercord import KoreaForecastForDiscord
 
     import discord
+    import os
 
     initial_extensions = (
         'cogs.weather',
@@ -79,7 +79,7 @@ KweatherDiscord
         def __init__(self):
             intents = discord.Intents.default()
             super().__init__(
-                command_prefix='!',
+                command_prefix=None,
                 intents=intents
             )
         
@@ -87,13 +87,10 @@ KweatherDiscord
             # aiohttp 사용을 위한 선언 (라이브러리 한계로 인해 동기 함수에서 선언할 수 없습니다.)
             # Kweathercord는 clientsession을 선언하지 않아도, 라이브러리에서 핸들링 할 수 있습니다.
             self.session = ClientSession()
-            self.weather = KoreaForecastForDiscord(self)
-            # 만약 봇 자체 클래스에서 aiohttp.ClientSession이 선언된 게 있다면,
-            # 아래의 방식을 이용해주세요.
-            self.weather.session = self.session
+            self.weather = KoreaForecastForDiscord(self, self.session)
             # 기상청 API 키를 넣어주세요.
-            self.weather.api_key = '여기에 기상청 api키를 넣거나, .env로부터 api 키를 얻어내세요.'
-        
+            # self.weather.api_key = '여기에 기상청 api키를 넣거나, .env로부터 api 키를 얻어내세요.'
+
             for extension in initial_extensions:
                 try:
                     await self.load_extension(extension)
@@ -105,6 +102,7 @@ KweatherDiscord
             ...
             # on_ready에서 사용해도 되나, 이 함수에서 복잡한 작업은 권장되지 않습니다.
             # 따라서, setup_hook 함수 내에서 이루어지는 것이 좋습니다.
+
 
 
 2. cog.weather
@@ -133,7 +131,7 @@ KweatherDiscord
         async def search(self, interaction : Interaction, where : str, period : Literal['지금', '향후 6시간', '향후 3~4일']):
             try:
                 if period == '지금':
-                    method == '초단기실황'
+                    method = '초단기실황'
                 elif period == '향후 3~4일':
                     method = '단기예보'
                 else:
@@ -144,6 +142,17 @@ KweatherDiscord
                 # interaction.response.defer를 사용하기 때문에,
                 # 오류 발생 시, Interaction.Followup 이나 InteractionMessage만 허용됩니다.
                 await interaction.followup.send(e)
+        
+        # use_area_list가 true이면 autocomplete 사용 시 지역 리스트를 불러올 수 있습니다.
+        @search.autocomplete('where')
+        async def search_ac(self, interaction : Interaction, current : str):
+            result = [
+                app_commands.Choice(name=choice, value=choice)
+                for choice in self.bot.weather.area_list
+                if current.replace(' ', '') in choice.replace(' ', '')
+            ]
+            # 디스코드 한계로 인해 선택 옵션은 최대 25개까지 입니다.
+            return result[:25]
 
 
     async def setup(bot : Test):
