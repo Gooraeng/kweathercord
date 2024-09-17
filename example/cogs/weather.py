@@ -19,7 +19,7 @@ class Weather(commands.Cog):
     async def search(self, interaction : Interaction, where : str, period : Literal['지금', '향후 6시간', '향후 3~4일']):
         try:
             if period == '지금':
-                method == '초단기실황'
+                method = '초단기실황'
             elif period == '향후 3~4일':
                 method = '단기예보'
             else:
@@ -30,6 +30,17 @@ class Weather(commands.Cog):
             # interaction.response.defer를 사용하기 때문에,
             # 오류 발생 시, Interaction.Followup 이나 InteractionMessage만 허용됩니다.
             await interaction.followup.send(e)
+    
+    # use_area_list가 true이면 autocomplete 사용 시 지역 리스트를 불러올 수 있습니다.
+    @search.autocomplete('where')
+    async def search_ac(self, interaction : Interaction, current : str):
+        result = [
+            app_commands.Choice(name=choice, value=choice)
+            for choice in self.bot.weather.area_list
+            if current.replace(' ', '') in choice.replace(' ', '')
+        ]
+        # 디스코드 한계로 인해 선택 옵션은 최대 25개까지 입니다.
+        return result[:25]
 
 
 async def setup(bot : Test):
