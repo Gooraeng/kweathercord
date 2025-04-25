@@ -51,8 +51,7 @@ kweathercord
 제한 사항
 -------------
 - 당일 최저/최고 온도는 명시적으로 제공하지 않으나 초단기예보 및 단기예보에서 각각 06시와 15시를 최저/최고온도로 지정하고 있습니다. 초단기실황은 지원하지 않습니다.
-- 이 패키지는 discord.py의 app_commands 모듈(Slash command)의 사용을 권장합니다.
-- 또, 안정적인 동작을 위해, defer가 적용되어 있습니다. Error Handling 시, edit_original_response나 followup.send 메소드 사용을 고려해주십시오.
+- 이 패키지는 명령어로 사용시 discord.py의 app_commands.command 혹은 commands.Context 기반의 사용을 권장합니다. 
 
 
 사용 예시
